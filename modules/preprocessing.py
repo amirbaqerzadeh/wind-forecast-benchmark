@@ -107,9 +107,56 @@ def add_time_features(df, datetime_col='datetime', cyclical_cols=None):
         df[f'{col}_cos'] = np.cos(2 * np.pi * df[col] / period)
     return df        
 
+def add_lag_and_rolling_features(df, target_cols, lags=None, rolling_windows=None):
+    """
+    Add lag and rolling window features for one or multiple target columns.
 
+    Parameters:
+    - df (pd.DataFrame): Input DataFrame.
+    - target_cols (str or list of str): Column(s) to create lag and rolling features for.
+    - lags (list of int, optional): List of lag values. Default is [1, 3, 6].
+    - rolling_windows (list of int, optional): List of rolling window sizes. Default is [3, 6, 12].
 
-
+    Returns:
+    - pd.DataFrame: DataFrame with new feature columns.
+    """
+    # Normalize target_cols to list
+    if isinstance(target_cols, str):
+        target_cols = [target_cols]
+    
+    if not isinstance(target_cols, list) or len(target_cols) == 0:
+        raise ValueError("target_cols must be a non-empty string or list of strings.")
+    
+    # Validate all target columns exist
+    missing_cols = [col for col in target_cols if col not in df.columns]
+    if missing_cols:
+        raise KeyError(f"Target columns not found in DataFrame: {missing_cols}")
+    
+    if not df.index.is_monotonic_increasing:
+        raise ValueError("DataFrame index must be sorted in increasing order for lag and rolling features.")
+    
+    if lags is None:    
+        lags = [1, 3, 6]
+    if rolling_windows is None:
+        rolling_windows = [3, 6, 12]
+    
+    if not all(isinstance(l, int) and l > 0 for l in lags):
+        raise ValueError("All lag values must be positive integers.")
+    if not all(isinstance(w, int) and w > 0 for w in rolling_windows):
+        raise ValueError("All rolling window sizes must be positive integers.")
+    
+    # Process each target column
+    for target_col in target_cols:
+        for lag in lags:
+            df[f'{target_col}_lag_{lag}'] = df[target_col].shift(lag)
+        
+        for window in rolling_windows:
+            df[f'{target_col}_roll_mean_{window}'] = df[target_col].rolling(window=window).mean()
+            df[f'{target_col}_roll_std_{window}'] = df[target_col].rolling(window=window).std()
+            df[f'{target_col}_roll_min_{window}'] = df[target_col].rolling(window=window).min()
+            df[f'{target_col}_roll_max_{window}'] = df[target_col].rolling(window=window).max()
+    
+    return df
 
 
 
