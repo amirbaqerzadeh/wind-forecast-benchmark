@@ -64,8 +64,48 @@ def load_and_basic_clean(path, required_columns=None, sort_by='datetime', dtype_
                 logger.warning("Column '%s' not found in DataFrame. Skipping dtype casting.", col)
     
     return df
-            
 
+
+            
+def add_time_features(df, datetime_col='datetime', cyclical_cols=None):
+    """"
+    Add time-based features to the DataFrame.
+    - Extract hour, month, day of week
+    - create cyclical features (sin/cos) for specific columns.
+    Parameters:
+    - df (pd.DataFrame): Input DataFrame.
+    - datetime_col (str): Name of the datetime column. Default is 'datetime'.
+    - cyclical_cols (list of str, optional): List of columns to encode cyclically. Default is None.
+    
+    Returns:
+    - df (pd.DataFrame): DataFrame with added time features.
+    """
+    if datetime_col not in df.columns:
+        raise KeyError(f"Datetime column '{datetime_col}' not found in DataFrame.")
+    if not np.issubdtype(df[datetime_col].dtype, np.datetime64):
+        try:
+            df[datetime_col] = pd.to_datetime(df[datetime_col])
+        except Exception as e:
+            raise ValueError(f"Error converting column '{datetime_col}' to datetime: {e}")
+
+    df['hour'] = df[datetime_col].dt.hour
+    df['month'] = df[datetime_col].dt.month
+    df['day_of_week'] = df[datetime_col].dt.dayofweek
+
+    if cyclical_cols is None:
+        cyclical_cols = ['hour']
+    
+    for col in cyclical_cols:
+        if col not in df.columns:
+            logger.warning("Cyclical column '%s' not found in DataFrame. Skipping cyclical encoding.", col)
+            continue
+        period = 24 if col == 'hour' else 12 if col == 'month' else 7 if col == 'day_of_week' else None
+        if period is None:
+            logger.warning("No defined period for column '%s'. Skipping cyclical encoding.", col), 
+            continue
+        df[f'{col}_sin'] = np.sin(2 * np.pi * df[col] / period)
+        df[f'{col}_cos'] = np.cos(2 * np.pi * df[col] / period)
+    return df        
 
 
 
