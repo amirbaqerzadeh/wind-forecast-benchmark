@@ -699,6 +699,36 @@ def prepare_dataset_from_config(config):
     return prepare_dataset(**full_config)
 
 
+import numpy as np
+import os
+
+def save_predictions(preds, filename, folder="../../results/"):
+    """
+    Save a numpy array to a folder with error handling.
+
+    Parameters
+    ----------
+    preds : np.ndarray
+        Prediction array to save.
+    filename : str
+        Name of the file (e.g., 'svr_preds.npy').
+    folder : str
+        Path to save folder.
+    """
+    try:
+        # Ensure the folder exists
+        os.makedirs(folder, exist_ok=True)
+        
+        # Full path
+        save_path = os.path.join(folder, filename)
+        
+        # Save numpy array
+        np.save(save_path, preds)
+        
+        print(f"[SUCCESS] Saved {filename} to {folder}")
+        
+    except Exception as e:
+        print(f"[ERROR] Could not save {filename}: {e}")
 
 
 
