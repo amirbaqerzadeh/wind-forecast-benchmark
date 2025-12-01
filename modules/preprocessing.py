@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import logging
 from typing import Optional, Dict, List, Tuple, Any
@@ -13,7 +12,7 @@ __original_csv = pd.read_csv
 def safe_read_csv(path, *args, **kwargs):
     """
     Safe wrapper around pd.read_csv to handle common issues.
-    
+    ````````````````````````
     This function provides enhanced error handling and logging for CSV reading operations.
     It can be used as a drop-in replacement for pd.read_csv.
     
@@ -207,62 +206,57 @@ def add_time_features(df, datetime_col='datetime', cyclical_cols=None):
     
     return df      
 
-def add_lag_and_rolling_features(df, target_cols, lags=None, rolling_windows=None):
-    """
-    Add lag and rolling window features for one or multiple target columns.
 
-    Parameters:
-    - df (pd.DataFrame): Input DataFrame.
-    - target_cols (str or list of str): Column(s) to create lag and rolling features for.
-    - lags (list of int, optional): List of lag values. Default is [1, 3, 6].
-    - rolling_windows (list of int, optional): List of rolling window sizes. Default is [3, 6, 12].
 
-    Returns:
-    - pd.DataFrame: DataFrame with new feature columns.
+def add_lag_and_rolling_features(df, target_cols, lags=None, rolling_windows=None, dropna=True):
     """
-    # Create a copy to avoid modifying the original DataFrame
-    df = df.copy()
-    
+    Add lag and rolling window features with leakage prevention and optimization.
+    """
     # Normalize target_cols to list
     if isinstance(target_cols, str):
         target_cols = [target_cols]
     
+    # Input validation (Keep your existing validation logic here)
     if not isinstance(target_cols, list) or len(target_cols) == 0:
-        raise ValueError("target_cols must be a non-empty string or list of strings.")
-    
-    # Validate all target columns exist
+        raise ValueError("target_cols must be a non-empty string or list.")
     missing_cols = [col for col in target_cols if col not in df.columns]
     if missing_cols:
-        raise KeyError(f"Target columns not found in DataFrame: {missing_cols}")
-    
+        raise KeyError(f"Target columns not found: {missing_cols}")
     if not df.index.is_monotonic_increasing:
-        raise ValueError("DataFrame index must be sorted in increasing order for lag and rolling features.")
-    
-    if lags is None:    
-        lags = [1, 3, 6]
-    if rolling_windows is None:
-        rolling_windows = [3, 6, 12]
-    
-    if not all(isinstance(l, int) and l > 0 for l in lags):
-        raise ValueError("All lag values must be positive integers.")
-    if not all(isinstance(w, int) and w > 0 for w in rolling_windows):
-        raise ValueError("All rolling window sizes must be positive integers.")
-    
-    # Process each target column
-    for target_col in target_cols:
-        # Add lag features
-        for lag in lags:
-            df[f'{target_col}_lag_{lag}'] = df[target_col].shift(lag)
-        
-        # Add rolling features
-        for window in rolling_windows:
-            df[f'{target_col}_roll_mean_{window}'] = df[target_col].rolling(window=window).mean()
-            df[f'{target_col}_roll_std_{window}'] = df[target_col].rolling(window=window).std()
-            df[f'{target_col}_roll_min_{window}'] = df[target_col].rolling(window=window).min()
-            df[f'{target_col}_roll_max_{window}'] = df[target_col].rolling(window=window).max()
-    
-    return df
+        raise ValueError("Index must be sorted.")
 
+    # Defaults
+    lags = lags or [1, 3, 6]
+    rolling_windows = rolling_windows or [3, 6, 12]
+
+    # Container for new features
+    new_features = []
+
+    for target_col in target_cols:
+        # 1. Add Lag Features
+        for lag in lags:
+            feat_name = f'{target_col}_lag_{lag}'
+            new_features.append(
+                df[target_col].shift(lag).rename(feat_name)
+            )
+        
+        # 2. Add Rolling Features (Shifted to prevent leakage)
+        # We shift by 1 so the window uses t-1, t-2, t-3... 
+        # independent of the current value at t.
+        target_shifted = df[target_col].shift(1)
+        
+        for window in rolling_windows:
+            new_features.append(target_shifted.rolling(window).mean().rename(f'{target_col}_roll_mean_{window}'))
+            new_features.append(target_shifted.rolling(window).std().rename(f'{target_col}_roll_std_{window}'))
+            new_features.append(target_shifted.rolling(window).min().rename(f'{target_col}_roll_min_{window}'))
+            new_features.append(target_shifted.rolling(window).max().rename(f'{target_col}_roll_max_{window}'))
+    df_out = pd.concat([df] + new_features, axis=1)
+    
+     # HANDLE NANS HERE
+    if dropna:
+        df_out = df_out.dropna()
+        
+    return df_out
 def split_train_test(
     df,
     target_col,
@@ -271,37 +265,44 @@ def split_train_test(
 ):
     """
     Split time-series DataFrame into train/test sets using last N rows as test.
-    
-    Parameters:
-    - df: pandas DataFrame
-    - target_col: str - the column to target
-    - test_size: int - number of rows reserved for test
-    - drop_cols: list of str - columns to drop from X
-    
-    Returns:
-    - X_train, y_train, X_test, y_test, test_df
+    Handles both single string targets and list of targets.
     """
-    if target_col not in df.columns:
-        raise KeyError(f"Target column '{target_col}' not found in DataFrame.")
+    # 1. Normalize target_col to a list for consistent logic
+    if isinstance(target_col, str):
+        target_cols = [target_col]
+    else:
+        target_cols = target_col
+
+    # Validation
+    missing_targets = [t for t in target_cols if t not in df.columns]
+    if missing_targets:
+        raise KeyError(f"Target columns not found: {missing_targets}")
         
     if not df.index.is_monotonic_increasing:
         raise ValueError("DataFrame must be sorted before splitting.")
         
     if not isinstance(test_size, int) or test_size <= 0:
-        raise ValueError("test_size must be a positive integer.")  # Fixed typo: "interger" → "integer"
+        raise ValueError("test_size must be a positive integer.")
     
     if test_size >= len(df):
         raise ValueError("test_size is larger than the DataFrame length.")
     
+    # Handle columns to drop
     if drop_cols is None:
         drop_cols = []
-
+    # Filter only existing columns to drop
     drop_cols = [c for c in drop_cols if c in df.columns]
 
-    y = df[target_col]
+    # 2. Define X and y
+    # If target_col was a single string, y returns a Series. 
+    # If list, y returns a DataFrame.
+    y = df[target_col] 
+    
+    # Drop columns + targets from X
+    cols_to_exclude = drop_cols + target_cols
+    X = df.drop(columns=cols_to_exclude)
 
-    X = df.drop(drop_cols + [target_col], axis=1)
-
+    # 3. Split by Index
     train_end = len(df) - test_size
 
     X_train = X.iloc[:train_end]
@@ -310,6 +311,7 @@ def split_train_test(
     X_test = X.iloc[train_end:]
     y_test = y.iloc[train_end:]
 
+    # Keep a copy of the raw test data for plotting later
     test_df = df.iloc[train_end:].copy()
 
     return X_train, y_train, X_test, y_test, test_df
