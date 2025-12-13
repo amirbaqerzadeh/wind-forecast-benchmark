@@ -1,0 +1,72 @@
+import numpy as np
+import xgboost as xgb
+import matplotlib.pyplot as plt
+
+# ... (Assume df_final, FEATS, train_end are defined) ...
+
+# 1. Define the Weights Function
+def get_sample_weights(y):
+    # Strategy: Weight = (Wind Speed / Mean Wind Speed)^2
+    # Squaring it makes the high winds EXPONENTIALLY more important
+    weights = (y / y.mean()) ** 2
+    return weights
+
+print("Starting Weighted 'Storm Hunter' XGBoost...")
+
+preds_weighted = []
+model_weighted = None
+
+# Using Fixed Params for speed (from your previous optimization)
+# We use squarederror because we want to punish outliers
+params = {
+    'objective': 'reg:squarederror', 
+    'n_estimators': 500,
+    'learning_rate': 0.05,
+    'max_depth': 5,
+    'n_jobs': -1,
+    'random_state': 42
+}
+
+for t in range(train_end, len(df_final)):
+
+    # --- RETRAINING ---
+    if (t - train_end) % RETRAIN_INTERVAL == 0:
+        if (t - train_end) != 0: print(f"Step {t}: Retraining Storm Hunter...")
+        
+        # Define Window
+        train_start = max(0, t - SLIDING_WINDOW_SIZE)
+        X_train = df_final.iloc[train_start:t][FEATS].values
+        y_train = df_final.iloc[train_start:t]['target_wind_speed'].values
+        
+        # --- CRITICAL STEP: CREATE WEIGHTS ---
+        # High winds get massive weights, low winds get tiny weights
+        weights = get_sample_weights(y_train)
+        
+        # Train with Weights
+        model_weighted = xgb.XGBRegressor(**params)
+        model_weighted.fit(X_train, y_train, sample_weight=weights)
+
+    # --- PREDICTION ---
+    if model_weighted is None:
+        preds_weighted.append(np.nan)
+        continue
+
+    x_next = df_final.iloc[[t]][FEATS].values
+    preds_weighted.append(model_weighted.predict(x_next)[0])
+
+# --- PLOT THE DIFFERENCE ---
+test_df['pred_storm'] = preds_weighted
+
+plt.figure(figsize=(15, 6))
+subset = 150
+actuals = test_df['target_wind_speed'].tail(subset)
+normal_xgb = test_df['pred_xgb'].tail(subset) # From your previous run
+storm_xgb = test_df['pred_storm'].tail(subset)
+
+plt.plot(actuals.values, label='Actual', color='black', linewidth=2)
+plt.plot(normal_xgb.values, label='Normal XGB (Conservative)', color='green', linestyle='--', alpha=0.6)
+plt.plot(storm_xgb.values, label='Weighted XGB (Aggressive)', color='red', linewidth=2)
+
+plt.title("Normal vs. Weighted 'Storm Hunter' XGBoost", fontsize=14)
+plt.legend()
+plt.show()
